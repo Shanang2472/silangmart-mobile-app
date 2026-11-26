@@ -29,9 +29,10 @@ object RouteNetworkHelper {
         runCatching {
             val urlStr = "https://router.project-osrm.org/route/v1/driving/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson"
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 4000
-                readTimeout = 4000
+                connectTimeout = 6000
+                readTimeout = 6000
                 requestMethod = "GET"
+                setRequestProperty("User-Agent", "SilangMiniMartAndroid/1.0")
             }
             if (conn.responseCode != 200) return@runCatching emptyList()
             val body = conn.inputStream.bufferedReader().readText()
@@ -57,8 +58,9 @@ object RouteNetworkHelper {
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
             val urlStr = "https://photon.komoot.io/api/?q=$encoded&limit=6&bbox=120.90,14.17,121.05,14.28"
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 4000
-                readTimeout = 4000
+                connectTimeout = 6000
+                readTimeout = 6000
+                setRequestProperty("User-Agent", "SilangMiniMartAndroid/1.0")
                 setRequestProperty("Accept-Language", "en")
             }
             if (conn.responseCode != 200) return@runCatching emptyList()

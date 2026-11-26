@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
@@ -150,6 +151,7 @@ private fun OsmInteractiveMapView(
     driverLat: Double?,
     driverLng: Double?,
     routePoints: List<Pair<Double, Double>>,
+    storeRoutePoints: List<Pair<Double, Double>>,
     interactivePinSelection: Boolean,
     onMapCoordinateSelected: ((Double, Double) -> Unit)?,
     modifier: Modifier = Modifier
@@ -182,6 +184,7 @@ private fun OsmInteractiveMapView(
                 if (driverLat != null && driverLng != null) {
                     add(GeoPoint(driverLat, driverLng))
                 }
+                routePoints.forEach { add(GeoPoint(it.first, it.second)) }
             }
             map.post {
                 runCatching {
@@ -278,21 +281,68 @@ private fun OsmInteractiveMapView(
                     )
                 }
 
-                // Route Polyline (OSRM street route or direct branch/rider -> customer segment)
-                val polyGeoPoints = if (routePoints.size >= 2) {
-                    routePoints.map { GeoPoint(it.first, it.second) }
-                } else {
-                    listOf(
-                        GeoPoint(driverLat ?: branchLat, driverLng ?: branchLng),
-                        GeoPoint(customerLat, customerLng)
-                    )
+                // Helper to anchor polyline endpoints tightly to exact start/end coordinates
+                fun buildAnchoredPath(
+                    startLat: Double,
+                    startLng: Double,
+                    endLat: Double,
+                    endLng: Double,
+                    waypoints: List<Pair<Double, Double>>
+                ): List<GeoPoint> {
+                    return if (waypoints.size >= 2) {
+                        buildList {
+                            add(GeoPoint(startLat, startLng))
+                            waypoints.forEach { add(GeoPoint(it.first, it.second)) }
+                            add(GeoPoint(endLat, endLng))
+                        }
+                    } else {
+                        listOf(GeoPoint(startLat, startLng), GeoPoint(endLat, endLng))
+                    }
                 }
-                val polyline = Polyline(mapView).apply {
-                    setPoints(polyGeoPoints)
+
+                // 1) Store -> Customer base delivery path (blue dashed reference when rider is mid-route)
+                val riderMovedFromStore = driverLat != null && driverLng != null &&
+                    haversineDistanceKm(branchLat, branchLng, driverLat, driverLng) > 0.03
+                if (riderMovedFromStore) {
+                    val baseGeoPoints = buildAnchoredPath(branchLat, branchLng, customerLat, customerLng, storeRoutePoints)
+                    val storePath = Polyline(mapView).apply {
+                        setPoints(baseGeoPoints)
+                        title = "$branchName Branch → $customerName"
+                        outlinePaint.color = android.graphics.Color.parseColor("#2563EB")
+                        outlinePaint.strokeWidth = 7f
+                        outlinePaint.strokeCap = Paint.Cap.ROUND
+                        outlinePaint.strokeJoin = Paint.Join.ROUND
+                        outlinePaint.isAntiAlias = true
+                        outlinePaint.pathEffect = DashPathEffect(floatArrayOf(18f, 12f), 0f)
+                    }
+                    mapView.overlays.add(storePath)
+                }
+
+                // 2) Active delivery path Polyline layer (Store -> Customer, or Rider -> Customer when en route)
+                val pathStartLat = if (riderMovedFromStore) driverLat!! else branchLat
+                val pathStartLng = if (riderMovedFromStore) driverLng!! else branchLng
+                val activeGeoPoints = buildAnchoredPath(pathStartLat, pathStartLng, customerLat, customerLng, routePoints)
+
+                val casingPolyline = Polyline(mapView).apply {
+                    setPoints(activeGeoPoints)
+                    outlinePaint.color = android.graphics.Color.WHITE
+                    outlinePaint.strokeWidth = 14f
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    outlinePaint.isAntiAlias = true
+                }
+                mapView.overlays.add(casingPolyline)
+
+                val routePolyline = Polyline(mapView).apply {
+                    setPoints(activeGeoPoints)
+                    title = "Delivery Path (${"%.2f".format(haversineDistanceKm(pathStartLat, pathStartLng, customerLat, customerLng))} km)"
                     outlinePaint.color = android.graphics.Color.parseColor("#F97316")
-                    outlinePaint.strokeWidth = 9f
+                    outlinePaint.strokeWidth = 8.5f
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = Paint.Join.ROUND
+                    outlinePaint.isAntiAlias = true
                 }
-                mapView.overlays.add(polyline)
+                mapView.overlays.add(routePolyline)
 
                 // Branch Marker (Blue)
                 val branchMarker = Marker(mapView).apply {
@@ -402,6 +452,7 @@ private fun OsmInteractiveMapView(
             LegendDot(SilangBlue, branchName)
             if (!driverName.isNullOrBlank()) LegendDot(SilangOrange, "Rider")
             LegendDot(SilangGreen, customerName.take(12))
+            LegendLine(SilangOrange, "Path")
         }
     }
 }
@@ -428,12 +479,19 @@ fun RouteMapPreview(
     var routePoints by remember(branchLat, branchLng, customerLat, customerLng, driverLat, driverLng) {
         mutableStateOf<List<Pair<Double, Double>>>(emptyList())
     }
+    var storeRoutePoints by remember(branchLat, branchLng, customerLat, customerLng) {
+        mutableStateOf<List<Pair<Double, Double>>>(emptyList())
+    }
     var showFullScreenMap by remember { mutableStateOf(false) }
 
     val startLat = driverLat ?: branchLat
     val startLng = driverLng ?: branchLng
     val distanceKm = remember(startLat, startLng, customerLat, customerLng) {
         haversineDistanceKm(startLat, startLng, customerLat, customerLng)
+    }
+
+    LaunchedEffect(branchLat, branchLng, customerLat, customerLng) {
+        storeRoutePoints = RouteNetworkHelper.fetchDrivingRoute(branchLat, branchLng, customerLat, customerLng)
     }
 
     LaunchedEffect(startLat, startLng, customerLat, customerLng) {
@@ -500,6 +558,7 @@ fun RouteMapPreview(
                 driverLat = driverLat,
                 driverLng = driverLng,
                 routePoints = routePoints,
+                storeRoutePoints = storeRoutePoints,
                 interactivePinSelection = interactivePinSelection,
                 onMapCoordinateSelected = onMapCoordinateSelected,
                 modifier = Modifier
@@ -606,6 +665,7 @@ fun RouteMapPreview(
                         driverLat = driverLat,
                         driverLng = driverLng,
                         routePoints = routePoints,
+                        storeRoutePoints = storeRoutePoints,
                         interactivePinSelection = interactivePinSelection,
                         onMapCoordinateSelected = onMapCoordinateSelected,
                         modifier = Modifier
@@ -670,6 +730,21 @@ fun FleetDeliveryMapCard(
     val activeDeliveries = remember(deliveries) {
         deliveries.filter { it.status == "Pending" || it.status == "Preparing" || it.status == "Out for Delivery" }
     }
+    var fleetRoutes by remember { mutableStateOf<Map<String, List<Pair<Double, Double>>>>(emptyMap()) }
+
+    LaunchedEffect(activeDeliveries, branches) {
+        val branchCoords = branches.associate { it.name to (it.lat to it.lng) }
+        val updated = mutableMapOf<String, List<Pair<Double, Double>>>()
+        activeDeliveries.forEach { d ->
+            val b = branchCoords[d.branch] ?: (14.2235 to 120.9739)
+            val sLat = d.driverLat ?: b.first
+            val sLng = d.driverLng ?: b.second
+            val pts = RouteNetworkHelper.fetchDrivingRoute(sLat, sLng, d.lat, d.lng)
+            if (pts.size >= 2) updated[d.id] = pts
+        }
+        fleetRoutes = updated
+    }
+
     val branchIcon = remember(context) { createPinDrawable(context, android.graphics.Color.parseColor("#0052CC"), "S") }
     val orderIcon = remember(context) { createPinDrawable(context, android.graphics.Color.parseColor("#16A34A"), "C") }
     val selectedIcon = remember(context) { createPinDrawable(context, android.graphics.Color.parseColor("#DC2626"), "★") }
@@ -748,10 +823,34 @@ fun FleetDeliveryMapCard(
                         val b = branchCoords[d.branch] ?: (14.2235 to 120.9739)
                         val startLat = d.driverLat ?: b.first
                         val startLng = d.driverLng ?: b.second
+                        val roadPts = fleetRoutes[d.id]
+                        val geoPts = if (!roadPts.isNullOrEmpty() && roadPts.size >= 2) {
+                            buildList {
+                                add(GeoPoint(startLat, startLng))
+                                roadPts.forEach { add(GeoPoint(it.first, it.second)) }
+                                add(GeoPoint(d.lat, d.lng))
+                            }
+                        } else {
+                            listOf(GeoPoint(startLat, startLng), GeoPoint(d.lat, d.lng))
+                        }
+                        val casing = Polyline(mapView).apply {
+                            setPoints(geoPts)
+                            outlinePaint.color = android.graphics.Color.WHITE
+                            outlinePaint.strokeWidth = if (d.id == selectedDeliveryId) 15f else 10f
+                            outlinePaint.strokeCap = Paint.Cap.ROUND
+                            outlinePaint.strokeJoin = Paint.Join.ROUND
+                            outlinePaint.isAntiAlias = true
+                        }
+                        mapView.overlays.add(casing)
+
                         val poly = Polyline(mapView).apply {
-                            setPoints(listOf(GeoPoint(startLat, startLng), GeoPoint(d.lat, d.lng)))
+                            setPoints(geoPts)
+                            title = "${d.id}: ${d.branch} → ${d.customerName}"
                             outlinePaint.color = if (d.id == selectedDeliveryId) android.graphics.Color.parseColor("#DC2626") else android.graphics.Color.parseColor("#F97316")
-                            outlinePaint.strokeWidth = if (d.id == selectedDeliveryId) 10f else 6f
+                            outlinePaint.strokeWidth = if (d.id == selectedDeliveryId) 9.5f else 6f
+                            outlinePaint.strokeCap = Paint.Cap.ROUND
+                            outlinePaint.strokeJoin = Paint.Join.ROUND
+                            outlinePaint.isAntiAlias = true
                         }
                         mapView.overlays.add(poly)
                     }
@@ -888,6 +987,14 @@ fun FleetDeliveryMapCard(
 private fun LegendDot(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
+        Text(text = label, color = SilangWhite, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun LegendLine(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(modifier = Modifier.width(12.dp).height(3.dp).clip(RoundedCornerShape(2.dp)).background(color))
         Text(text = label, color = SilangWhite, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
