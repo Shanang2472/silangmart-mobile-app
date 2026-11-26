@@ -156,7 +156,7 @@ private fun OsmInteractiveMapView(
 ) {
     val context = LocalContext.current
     var mapRef by remember { mutableStateOf<MapView?>(null) }
-    var useVoyagerTiles by remember { mutableStateOf(false) }
+    var useVoyagerTiles by remember { mutableStateOf(true) }
     var lastCenteredLat by remember { mutableStateOf(customerLat) }
     var lastCenteredLng by remember { mutableStateOf(customerLng) }
 
@@ -173,6 +173,30 @@ private fun OsmInteractiveMapView(
         createPinDrawable(context, android.graphics.Color.parseColor("#F97316"), "R")
     }
 
+    fun frameRouteOrPin(map: MapView, animate: Boolean) {
+        val dist = haversineDistanceKm(branchLat, branchLng, customerLat, customerLng)
+        if (!interactivePinSelection && dist > 0.05) {
+            val pts = buildList {
+                add(GeoPoint(branchLat, branchLng))
+                add(GeoPoint(customerLat, customerLng))
+                if (driverLat != null && driverLng != null) {
+                    add(GeoPoint(driverLat, driverLng))
+                }
+            }
+            map.post {
+                runCatching {
+                    map.zoomToBoundingBox(BoundingBox.fromGeoPoints(pts).increaseByScale(1.35f), animate)
+                }.onFailure {
+                    if (animate) map.controller.animateTo(GeoPoint(customerLat, customerLng))
+                    else map.controller.setCenter(GeoPoint(customerLat, customerLng))
+                }
+            }
+        } else {
+            if (animate) map.controller.animateTo(GeoPoint(customerLat, customerLng))
+            else map.controller.setCenter(GeoPoint(customerLat, customerLng))
+        }
+    }
+
     LaunchedEffect(Unit) {
         val appCtx = context.applicationContext
         Configuration.getInstance().apply {
@@ -182,9 +206,11 @@ private fun OsmInteractiveMapView(
         }
     }
 
-    LaunchedEffect(customerLat, customerLng, mapRef) {
+    LaunchedEffect(branchLat, branchLng, customerLat, customerLng, driverLat, driverLng, interactivePinSelection, mapRef) {
         val map = mapRef ?: return@LaunchedEffect
-        if (kotlin.math.abs(customerLat - lastCenteredLat) > 0.00001 ||
+        if (!interactivePinSelection) {
+            frameRouteOrPin(map, animate = true)
+        } else if (kotlin.math.abs(customerLat - lastCenteredLat) > 0.00001 ||
             kotlin.math.abs(customerLng - lastCenteredLng) > 0.00001
         ) {
             lastCenteredLat = customerLat
@@ -215,6 +241,9 @@ private fun OsmInteractiveMapView(
                     zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
                     controller.setZoom(15.5)
                     controller.setCenter(GeoPoint(customerLat, customerLng))
+                    addOnFirstLayoutListener { _, _, _, _, _ ->
+                        frameRouteOrPin(this, animate = false)
+                    }
                     setOnTouchListener { v, event ->
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
@@ -317,7 +346,7 @@ private fun OsmInteractiveMapView(
             ) {
                 Icon(Icons.Default.Layers, contentDescription = "Switch map layer", tint = SilangBlue, modifier = Modifier.size(16.dp))
                 Text(
-                    text = if (useVoyagerTiles) "Voyager" else "OSM",
+                    text = if (useVoyagerTiles) "Street" else "OSM",
                     style = MaterialTheme.typography.labelSmall,
                     color = SilangSlate900,
                     fontWeight = FontWeight.SemiBold
@@ -349,23 +378,7 @@ private fun OsmInteractiveMapView(
             SmallFloatingActionButton(
                 onClick = {
                     val map = mapRef ?: return@SmallFloatingActionButton
-                    val dist = haversineDistanceKm(branchLat, branchLng, customerLat, customerLng)
-                    if (!interactivePinSelection && dist > 0.05) {
-                        val pts = buildList {
-                            add(GeoPoint(branchLat, branchLng))
-                            add(GeoPoint(customerLat, customerLng))
-                            if (driverLat != null && driverLng != null) {
-                                add(GeoPoint(driverLat, driverLng))
-                            }
-                        }
-                        runCatching {
-                            map.zoomToBoundingBox(BoundingBox.fromGeoPoints(pts).increaseByScale(1.3f), true)
-                        }.onFailure {
-                            map.controller.animateTo(GeoPoint(customerLat, customerLng))
-                        }
-                    } else {
-                        map.controller.animateTo(GeoPoint(customerLat, customerLng))
-                    }
+                    frameRouteOrPin(map, animate = true)
                 },
                 containerColor = SilangWhite,
                 contentColor = SilangBlue,
@@ -406,6 +419,9 @@ fun RouteMapPreview(
     driverLng: Double? = null,
     interactivePinSelection: Boolean = false,
     onMapCoordinateSelected: ((Double, Double) -> Unit)? = null,
+    title: String? = null,
+    compactHeightDp: Int = 220,
+    onClose: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -436,15 +452,21 @@ fun RouteMapPreview(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Icon(Icons.Default.Map, contentDescription = null, tint = SilangOrangeBright, modifier = Modifier.size(18.dp))
                     Text(
-                        text = if (interactivePinSelection) "Tap Map to Adjust GPS Pin" else "GPS Route Map (OSM)",
+                        text = title ?: if (interactivePinSelection) "Tap Map to Adjust GPS Pin" else "GPS Route Map (Leaflet / OSM)",
                         style = MaterialTheme.typography.titleSmall,
-                        color = SilangWhite
+                        color = SilangWhite,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         text = "${"%.2f".format(distanceKm)} km • ~${max(3, (distanceKm * 4).toInt())}m",
                         style = MaterialTheme.typography.labelSmall,
@@ -455,6 +477,14 @@ fun RouteMapPreview(
                         modifier = Modifier.minimumInteractiveComponentSize().testTag("expand_map_button")
                     ) {
                         Icon(Icons.Default.Fullscreen, contentDescription = "Expand map", tint = SilangWhite, modifier = Modifier.size(20.dp))
+                    }
+                    if (onClose != null) {
+                        IconButton(
+                            onClick = onClose,
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("close_route_map_button")
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Hide map", tint = SilangSlate400, modifier = Modifier.size(20.dp))
+                        }
                     }
                 }
             }
@@ -474,7 +504,7 @@ fun RouteMapPreview(
                 onMapCoordinateSelected = onMapCoordinateSelected,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp)
+                    .height(compactHeightDp.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .border(1.dp, SilangSlate800, RoundedCornerShape(12.dp))
             )
@@ -617,6 +647,237 @@ fun RouteMapPreview(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@SuppressLint("ClickableViewAccessibility")
+@Composable
+fun FleetDeliveryMapCard(
+    branches: List<BranchRecord>,
+    deliveries: List<Delivery>,
+    selectedDeliveryId: String?,
+    onSelectDelivery: (Delivery) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var useVoyagerTiles by remember { mutableStateOf(true) }
+    var showFullScreen by remember { mutableStateOf(false) }
+
+    val activeDeliveries = remember(deliveries) {
+        deliveries.filter { it.status == "Pending" || it.status == "Preparing" || it.status == "Out for Delivery" }
+    }
+    val branchIcon = remember(context) { createPinDrawable(context, android.graphics.Color.parseColor("#0052CC"), "S") }
+    val orderIcon = remember(context) { createPinDrawable(context, android.graphics.Color.parseColor("#16A34A"), "C") }
+    val selectedIcon = remember(context) { createPinDrawable(context, android.graphics.Color.parseColor("#DC2626"), "★") }
+    val riderIcon = remember(context) { createPinDrawable(context, android.graphics.Color.parseColor("#F97316"), "R") }
+    val latestSelect by rememberUpdatedState(onSelectDelivery)
+
+    fun fitAllPoints(map: MapView, animate: Boolean) {
+        val pts = buildList {
+            branches.filter { it.isActive }.forEach { add(GeoPoint(it.lat, it.lng)) }
+            activeDeliveries.forEach { d ->
+                add(GeoPoint(d.lat, d.lng))
+                if (d.driverLat != null && d.driverLng != null) add(GeoPoint(d.driverLat, d.driverLng))
+            }
+        }
+        if (pts.size >= 2) {
+            map.post {
+                runCatching {
+                    map.zoomToBoundingBox(BoundingBox.fromGeoPoints(pts).increaseByScale(1.35f), animate)
+                }
+            }
+        } else if (pts.size == 1) {
+            if (animate) map.controller.animateTo(pts.first())
+            else map.controller.setCenter(pts.first())
+        }
+    }
+
+    @Composable
+    fun FleetMapContent(mapModifier: Modifier) {
+        var instanceMapRef by remember { mutableStateOf<MapView?>(null) }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                instanceMapRef?.onPause()
+                instanceMapRef?.onDetach()
+            }
+        }
+
+        Box(modifier = mapModifier) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    Configuration.getInstance().apply {
+                        userAgentValue = "SilangMiniMartAndroid/1.0 (${ctx.applicationContext.packageName})"
+                        osmdroidBasePath = File(ctx.applicationContext.cacheDir, "osmdroid")
+                        osmdroidTileCache = File(ctx.applicationContext.cacheDir, "osmdroid/tiles")
+                    }
+                    MapView(ctx).apply {
+                        setTileSource(if (useVoyagerTiles) CartoVoyagerTileSource else TileSourceFactory.MAPNIK)
+                        setMultiTouchControls(true)
+                        zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
+                        controller.setZoom(14.5)
+                        val firstPt = branches.firstOrNull()?.let { GeoPoint(it.lat, it.lng) } ?: GeoPoint(14.2235, 120.9739)
+                        controller.setCenter(firstPt)
+                        addOnFirstLayoutListener { _, _, _, _, _ -> fitAllPoints(this, animate = false) }
+                        setOnTouchListener { v, event ->
+                            when (event.actionMasked) {
+                                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> v.parent?.requestDisallowInterceptTouchEvent(true)
+                                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.parent?.requestDisallowInterceptTouchEvent(false)
+                            }
+                            false
+                        }
+                        onResume()
+                        instanceMapRef = this
+                    }
+                },
+                update = { mapView ->
+                    val targetSource = if (useVoyagerTiles) CartoVoyagerTileSource else TileSourceFactory.MAPNIK
+                    if (mapView.tileProvider.tileSource.name() != targetSource.name()) {
+                        mapView.setTileSource(targetSource)
+                    }
+                    mapView.overlays.clear()
+
+                    val branchCoords = branches.associate { it.name to (it.lat to it.lng) }
+
+                    activeDeliveries.forEach { d ->
+                        val b = branchCoords[d.branch] ?: (14.2235 to 120.9739)
+                        val startLat = d.driverLat ?: b.first
+                        val startLng = d.driverLng ?: b.second
+                        val poly = Polyline(mapView).apply {
+                            setPoints(listOf(GeoPoint(startLat, startLng), GeoPoint(d.lat, d.lng)))
+                            outlinePaint.color = if (d.id == selectedDeliveryId) android.graphics.Color.parseColor("#DC2626") else android.graphics.Color.parseColor("#F97316")
+                            outlinePaint.strokeWidth = if (d.id == selectedDeliveryId) 10f else 6f
+                        }
+                        mapView.overlays.add(poly)
+                    }
+
+                    branches.filter { it.isActive }.forEach { b ->
+                        val m = Marker(mapView).apply {
+                            position = GeoPoint(b.lat, b.lng)
+                            title = "${b.name} Branch"
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                            icon = branchIcon
+                        }
+                        mapView.overlays.add(m)
+                    }
+
+                    activeDeliveries.forEach { d ->
+                        val custMarker = Marker(mapView).apply {
+                            position = GeoPoint(d.lat, d.lng)
+                            title = "${d.id} • ${d.customerName} (${d.status})"
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                            icon = if (d.id == selectedDeliveryId) selectedIcon else orderIcon
+                            setOnMarkerClickListener { marker, _ ->
+                                marker.showInfoWindow()
+                                latestSelect(d)
+                                true
+                            }
+                        }
+                        mapView.overlays.add(custMarker)
+
+                        if (d.driverLat != null && d.driverLng != null && d.status == "Out for Delivery") {
+                            val rMarker = Marker(mapView).apply {
+                                position = GeoPoint(d.driverLat, d.driverLng)
+                                title = "${d.driverName} (${d.id})"
+                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                                icon = riderIcon
+                                setOnMarkerClickListener { marker, _ ->
+                                    marker.showInfoWindow()
+                                    latestSelect(d)
+                                    true
+                                }
+                            }
+                            mapView.overlays.add(rMarker)
+                        }
+                    }
+                    mapView.invalidate()
+                }
+            )
+
+            Surface(
+                onClick = { useVoyagerTiles = !useVoyagerTiles },
+                shape = RoundedCornerShape(10.dp),
+                color = SilangWhite.copy(alpha = 0.94f),
+                shadowElevation = 2.dp,
+                modifier = Modifier.align(Alignment.TopStart).padding(8.dp).minimumInteractiveComponentSize()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(Icons.Default.Layers, contentDescription = "Switch map layer", tint = SilangBlue, modifier = Modifier.size(16.dp))
+                    Text(if (useVoyagerTiles) "Street" else "OSM", style = MaterialTheme.typography.labelSmall, color = SilangSlate900, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Column(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SmallFloatingActionButton(onClick = { instanceMapRef?.controller?.zoomIn() }, containerColor = SilangWhite, contentColor = SilangSlate900, modifier = Modifier.minimumInteractiveComponentSize()) {
+                    Icon(Icons.Default.Add, contentDescription = "Zoom in", modifier = Modifier.size(18.dp))
+                }
+                SmallFloatingActionButton(onClick = { instanceMapRef?.controller?.zoomOut() }, containerColor = SilangWhite, contentColor = SilangSlate900, modifier = Modifier.minimumInteractiveComponentSize()) {
+                    Icon(Icons.Default.Remove, contentDescription = "Zoom out", modifier = Modifier.size(18.dp))
+                }
+                SmallFloatingActionButton(onClick = { instanceMapRef?.let { fitAllPoints(it, animate = true) } }, containerColor = SilangWhite, contentColor = SilangBlue, modifier = Modifier.minimumInteractiveComponentSize()) {
+                    Icon(Icons.Default.MyLocation, contentDescription = "Fit all pins", modifier = Modifier.size(18.dp))
+                }
+            }
+
+            Row(
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(8.dp)).background(SilangSlate950.copy(alpha = 0.85f)).padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LegendDot(SilangBlue, "Branches")
+                LegendDot(SilangOrange, "Riders")
+                LegendDot(SilangGreen, "Active (${activeDeliveries.size})")
+            }
+        }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SilangSlate900),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Hub, contentDescription = null, tint = SilangOrangeBright, modifier = Modifier.size(18.dp))
+                    Text("Live Fleet Map (${activeDeliveries.size} active)", style = MaterialTheme.typography.titleSmall, color = SilangWhite)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showFullScreen = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                        Icon(Icons.Default.Fullscreen, contentDescription = "Expand fleet map", tint = SilangWhite, modifier = Modifier.size(20.dp))
+                    }
+                    IconButton(onClick = onClose, modifier = Modifier.minimumInteractiveComponentSize()) {
+                        Icon(Icons.Default.Close, contentDescription = "Hide fleet map", tint = SilangSlate400, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+            FleetMapContent(
+                Modifier.fillMaxWidth().height(230.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, SilangSlate800, RoundedCornerShape(12.dp))
+            )
+            Text("Tap any green/orange pin on the map to inspect its delivery route.", style = MaterialTheme.typography.labelSmall, color = SilangSlate400)
+        }
+    }
+
+    if (showFullScreen) {
+        Dialog(onDismissRequest = { showFullScreen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = SilangSlate950) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Live Delivery Fleet (${activeDeliveries.size} active)", style = MaterialTheme.typography.titleMedium, color = SilangWhite)
+                        IconButton(onClick = { showFullScreen = false }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                            Icon(Icons.Default.Close, contentDescription = "Close fleet map", tint = SilangWhite)
+                        }
+                    }
+                    FleetMapContent(Modifier.weight(1f).fillMaxWidth())
                 }
             }
         }

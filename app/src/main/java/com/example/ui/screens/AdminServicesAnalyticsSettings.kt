@@ -26,6 +26,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.model.*
 import com.example.ui.SilangUiState
+import com.example.ui.components.RouteMapPreview
 import com.example.ui.components.ServiceReceiptDialog
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
@@ -502,17 +503,37 @@ fun AdminSettingsScreen(
         var bAddr by remember { mutableStateOf(editingBranch?.address ?: "") }
         var bLat by remember { mutableStateOf((editingBranch?.lat ?: 14.2235).toString()) }
         var bLng by remember { mutableStateOf((editingBranch?.lng ?: 120.9739).toString()) }
+        val latNum = bLat.toDoubleOrNull() ?: 14.2235
+        val lngNum = bLng.toDoubleOrNull() ?: 120.9739
         AlertDialog(
             onDismissRequest = { showBranchDialog = false },
             title = { Text(if (editingBranch == null) "Add Branch" else "Edit Branch") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = bName, onValueChange = { bName = it }, label = { Text("Branch Name *") }, singleLine = true)
-                    OutlinedTextField(value = bAddr, onValueChange = { bAddr = it }, label = { Text("Address *") }, singleLine = true)
+                Column(
+                    modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(value = bName, onValueChange = { bName = it }, label = { Text("Branch Name *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = bAddr, onValueChange = { bAddr = it }, label = { Text("Address *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(value = bLat, onValueChange = { bLat = it }, label = { Text("Latitude") }, modifier = Modifier.weight(1f), singleLine = true)
                         OutlinedTextField(value = bLng, onValueChange = { bLng = it }, label = { Text("Longitude") }, modifier = Modifier.weight(1f), singleLine = true)
                     }
+                    RouteMapPreview(
+                        branchName = bName.ifBlank { "Branch" },
+                        branchLat = latNum,
+                        branchLng = lngNum,
+                        customerName = bName.ifBlank { "Branch Pin" },
+                        customerLat = latNum,
+                        customerLng = lngNum,
+                        interactivePinSelection = true,
+                        onMapCoordinateSelected = { pLat, pLng ->
+                            bLat = java.lang.String.format(java.util.Locale.US, "%.5f", pLat)
+                            bLng = java.lang.String.format(java.util.Locale.US, "%.5f", pLng)
+                        },
+                        title = "Tap Map to Pin Branch GPS",
+                        compactHeightDp = 175
+                    )
                 }
             },
             confirmButton = {

@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -20,8 +21,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.data.model.*
+import com.example.data.network.LocationSearchResult
+import com.example.data.network.RouteNetworkHelper
 import com.example.ui.SilangUiState
 import com.example.ui.components.DeliveryReceiptDialog
+import com.example.ui.components.FleetDeliveryMapCard
 import com.example.ui.components.RouteMapPreview
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
@@ -39,6 +43,7 @@ fun AdminDeliveriesScreen(
     val scope = rememberCoroutineScope()
     var statusFilter by remember { mutableStateOf("All") }
     var trackedDelivery by remember { mutableStateOf<Delivery?>(null) }
+    var showFleetMap by remember { mutableStateOf(false) }
     var receiptDelivery by remember { mutableStateOf<Delivery?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
 
@@ -54,14 +59,27 @@ fun AdminDeliveriesScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Deliveries (${state.deliveries.size})", style = MaterialTheme.typography.titleLarge)
-            Button(
-                onClick = { showCreateDialog = true },
-                colors = ButtonDefaults.buttonColors(containerColor = SilangOrange),
-                modifier = Modifier.testTag("create_delivery_button")
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("New Order")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(
+                    onClick = {
+                        showFleetMap = !showFleetMap
+                        if (showFleetMap) trackedDelivery = null
+                    },
+                    modifier = Modifier.testTag("admin_fleet_map_button")
+                ) {
+                    Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (showFleetMap) "Hide Fleet" else "Fleet Map")
+                }
+                Button(
+                    onClick = { showCreateDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = SilangOrange),
+                    modifier = Modifier.testTag("create_delivery_button")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New Order")
+                }
             }
         }
 
@@ -74,7 +92,20 @@ fun AdminDeliveriesScreen(
             }
         }
 
-        if (trackedDelivery != null) {
+        if (showFleetMap) {
+            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                FleetDeliveryMapCard(
+                    branches = state.branches,
+                    deliveries = state.deliveries,
+                    selectedDeliveryId = trackedDelivery?.id,
+                    onSelectDelivery = { selected ->
+                        showFleetMap = false
+                        trackedDelivery = selected
+                    },
+                    onClose = { showFleetMap = false }
+                )
+            }
+        } else if (trackedDelivery != null) {
             val d = state.deliveries.firstOrNull { it.id == trackedDelivery?.id } ?: trackedDelivery!!
             val branchCoord = state.branchCoordinates[d.branch] ?: (14.2235 to 120.9739)
             Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -87,7 +118,9 @@ fun AdminDeliveriesScreen(
                     customerLng = d.lng,
                     driverName = d.driverName,
                     driverLat = d.driverLat,
-                    driverLng = d.driverLng
+                    driverLng = d.driverLng,
+                    title = "Track ${d.id} • ${d.customerName}",
+                    onClose = { trackedDelivery = null }
                 )
             }
         }
@@ -165,8 +198,22 @@ fun AdminDeliveriesScreen(
                                         }
                                     }
                                 }
-                                TextButton(onClick = { trackedDelivery = if (trackedDelivery?.id == del.id) null else del }) {
-                                    Text(if (trackedDelivery?.id == del.id) "Hide Map" else "Track GPS")
+                                val isTracked = trackedDelivery?.id == del.id
+                                TextButton(onClick = {
+                                    showFleetMap = false
+                                    trackedDelivery = if (isTracked) null else del
+                                }) {
+                                    Icon(
+                                        Icons.Default.LocationOn,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = if (isTracked) SilangOrange else SilangBlue
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        if (isTracked) "Hide Map" else "Track GPS",
+                                        color = if (isTracked) SilangOrange else SilangBlue
+                                    )
                                 }
                                 TextButton(onClick = { receiptDelivery = del }) {
                                     Text("Receipt")
@@ -237,26 +284,66 @@ private fun CreateDeliveryDialog(
     onDismiss: () -> Unit,
     onSubmit: (Delivery, Map<String, Int>) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    val branchCoord = state.branchCoordinates[state.currentBranch] ?: (14.2235 to 120.9739)
     var customerName by remember { mutableStateOf("") }
     var customerPhone by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var barangay by remember { mutableStateOf("Brgy. Sabutan") }
+    var destLat by remember(state.currentBranch) { mutableStateOf(branchCoord.first + 0.004) }
+    var destLng by remember(state.currentBranch) { mutableStateOf(branchCoord.second + 0.004) }
+    var locQuery by remember { mutableStateOf("") }
+    var locHits by remember { mutableStateOf<List<LocationSearchResult>>(emptyList()) }
     var selectedProductId by remember { mutableStateOf(state.products.firstOrNull { it.isSellable() }?.id ?: "") }
     var qtyText by remember { mutableStateOf("1") }
     var feeText by remember { mutableStateOf("50") }
     var paymentMethod by remember { mutableStateOf("Cash") }
 
-    val branchCoord = state.branchCoordinates[state.currentBranch] ?: (14.2235 to 120.9739)
-
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Create Delivery Order (${state.currentBranch})") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = customerName, onValueChange = { customerName = it }, label = { Text("Customer Name *") }, singleLine = true)
-                OutlinedTextField(value = customerPhone, onValueChange = { customerPhone = it }, label = { Text("Phone *") }, singleLine = true)
-                OutlinedTextField(value = barangay, onValueChange = { barangay = it }, label = { Text("Barangay") }, singleLine = true)
-                OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Street / Landmark *") }, singleLine = true)
+            Column(
+                modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(value = customerName, onValueChange = { customerName = it }, label = { Text("Customer Name *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = customerPhone, onValueChange = { customerPhone = it }, label = { Text("Phone *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = barangay, onValueChange = { barangay = it }, label = { Text("Barangay") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Street / Landmark *") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(value = locQuery, onValueChange = { locQuery = it }, label = { Text("Find street in Silang") }, singleLine = true, modifier = Modifier.weight(1f))
+                    Button(onClick = { scope.launch { locHits = RouteNetworkHelper.searchLocations(locQuery) } }) { Text("Find") }
+                }
+                locHits.forEach { hit ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            destLat = hit.lat
+                            destLng = hit.lng
+                            if (hit.barangay.isNotBlank()) barangay = hit.barangay
+                            address = hit.displayName
+                            locHits = emptyList()
+                        },
+                        color = SilangSurface,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(hit.displayName, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(8.dp))
+                    }
+                }
+
+                RouteMapPreview(
+                    branchName = state.currentBranch,
+                    branchLat = branchCoord.first,
+                    branchLng = branchCoord.second,
+                    customerName = customerName.ifBlank { "Drop-off Pin" },
+                    customerLat = destLat,
+                    customerLng = destLng,
+                    interactivePinSelection = true,
+                    onMapCoordinateSelected = { lat, lng -> destLat = lat; destLng = lng },
+                    compactHeightDp = 160
+                )
+
                 val sellable = state.products.filter { it.isSellable() && it.stockForBranch(state.currentBranch) > 0 }
                 if (sellable.isEmpty()) {
                     Text("No verified in-stock products at ${state.currentBranch}.", color = SilangRed, style = MaterialTheme.typography.bodySmall)
@@ -296,8 +383,6 @@ private fun CreateDeliveryDialog(
                     val fee = feeText.toDoubleOrNull() ?: 50.0
                     if (customerName.isBlank() || customerPhone.isBlank() || address.isBlank()) return@Button
                     val total = prod.price * qty + fee
-                    val destLat = branchCoord.first + 0.005
-                    val destLng = branchCoord.second + 0.004
                     val del = Delivery(
                         id = "DEL-${System.currentTimeMillis().toString().takeLast(5)}",
                         branch = state.currentBranch,
@@ -395,14 +480,27 @@ fun AdminCustomersScreen(state: SilangUiState) {
 
     selectedCustomer?.let { cust ->
         val orders = state.deliveries.filter { it.customerName.equals(cust.name, ignoreCase = true) }
+        val branchCoord = state.branchCoordinates[state.currentBranch] ?: (14.2235 to 120.9739)
         AlertDialog(
             onDismissRequest = { selectedCustomer = null },
             title = { Text(cust.name) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text("Phone: ${cust.phone}")
                     Text("Address: ${cust.address}, ${cust.barangay}")
-                    Text("GPS Pin: ${"%.5f".format(cust.lat)}, ${"%.5f".format(cust.lng)}", style = MaterialTheme.typography.labelSmall)
+                    RouteMapPreview(
+                        branchName = state.currentBranch,
+                        branchLat = branchCoord.first,
+                        branchLng = branchCoord.second,
+                        customerName = cust.name,
+                        customerLat = cust.lat,
+                        customerLng = cust.lng,
+                        title = "Customer Store Location",
+                        compactHeightDp = 175
+                    )
                     HorizontalDivider()
                     Text("Order History (${orders.size})", style = MaterialTheme.typography.titleSmall)
                     if (orders.isEmpty()) {

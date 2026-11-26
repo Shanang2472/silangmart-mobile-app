@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -12,6 +17,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -23,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -30,9 +37,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.*
+import com.example.data.network.LocationSearchResult
+import com.example.data.network.RouteNetworkHelper
 import com.example.ui.SilangUiState
 import com.example.ui.components.*
 import com.example.ui.theme.*
@@ -71,6 +81,7 @@ fun CustomerPortalScreen(
     var showAiSheet by remember { mutableStateOf(false) }
     var receiptDelivery by remember { mutableStateOf<Delivery?>(null) }
     var orderFilter by remember { mutableStateOf("active") } // active, archived, trash
+    var selectedTrackOrderId by remember { mutableStateOf<String?>(null) }
 
     if (subTab != "shop") {
         BackHandler { subTab = "shop" }
@@ -296,6 +307,14 @@ fun CustomerPortalScreen(
                                             Text(del.items.joinToString { "${it.quantity}x ${it.name}" }, style = MaterialTheme.typography.bodySmall)
                                             Text("Payment: ${del.paymentMethod} (${del.paymentStatus})", style = MaterialTheme.typography.labelSmall, color = SilangSlate600)
                                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                TextButton(onClick = {
+                                                    selectedTrackOrderId = del.id
+                                                    subTab = "tracking"
+                                                }) {
+                                                    Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(16.dp), tint = SilangOrange)
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text("Track GPS", color = SilangOrange)
+                                                }
                                                 TextButton(onClick = { receiptDelivery = del }) { Text("Receipt") }
                                                 if (orderFilter == "active") {
                                                     TextButton(onClick = { onUpdateDelivery(del.copy(archivedAt = Instant.now().toString())) }) { Text("Archive") }
@@ -313,24 +332,112 @@ fun CustomerPortalScreen(
                 }
 
                 "tracking" -> {
-                    val activeTrack = myOrders.firstOrNull { it.status == "Out for Delivery" || it.status == "Preparing" || it.status == "Pending" }
-                    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val trackableOrders = remember(myOrders) {
+                        val nonDeleted = myOrders.filter { it.deletedAt == null }
+                        val active = nonDeleted.filter { it.status == "Out for Delivery" || it.status == "Preparing" || it.status == "Pending" }
+                        val past = nonDeleted.filter { it !in active }
+                        active + past
+                    }
+                    val activeTrack = trackableOrders.firstOrNull { it.id == selectedTrackOrderId }
+                        ?: trackableOrders.firstOrNull()
+
+                    Column(
+                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         if (activeTrack == null) {
-                            Card(colors = CardDefaults.cardColors(containerColor = SilangWhite)) {
-                                Text(
-                                    "You have no active deliveries right now. Place an order in Shop to track live GPS!",
-                                    modifier = Modifier.padding(16.dp),
-                                    color = SilangSlate600
-                                )
-                            }
-                        } else {
-                            val bCoord = state.branchCoordinates[activeTrack.branch] ?: (14.2235 to 120.9739)
                             Card(colors = CardDefaults.cardColors(containerColor = SilangWhite), shape = RoundedCornerShape(16.dp)) {
-                                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("Tracking ${activeTrack.id} • ${activeTrack.status}", style = MaterialTheme.typography.titleMedium)
-                                    Text("Rider: ${activeTrack.driverName} • ETA ~${activeTrack.etaMinutes} mins", style = MaterialTheme.typography.bodySmall, color = SilangOrange)
+                                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("No Deliveries to Track", style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        "Place an order in Shop to watch your rider and delivery route live on the street map!",
+                                        color = SilangSlate600,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Button(onClick = { subTab = "shop" }, colors = ButtonDefaults.buttonColors(containerColor = SilangOrange)) {
+                                        Text("Browse Shop")
+                                    }
                                 }
                             }
+                        } else {
+                            if (trackableOrders.size > 1) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    trackableOrders.forEach { ord ->
+                                        FilterChip(
+                                            selected = ord.id == activeTrack.id,
+                                            onClick = { selectedTrackOrderId = ord.id },
+                                            label = { Text("${ord.id} (${ord.status})") }
+                                        )
+                                    }
+                                }
+                            }
+
+                            val bCoord = state.branchCoordinates[activeTrack.branch] ?: (14.2235 to 120.9739)
+                            Card(colors = CardDefaults.cardColors(containerColor = SilangWhite), shape = RoundedCornerShape(16.dp)) {
+                                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("Order ${activeTrack.id}", style = MaterialTheme.typography.titleMedium)
+                                            Text("${activeTrack.branch} Branch → ${activeTrack.barangay}", style = MaterialTheme.typography.bodySmall, color = SilangSlate600)
+                                        }
+                                        Surface(
+                                            color = when (activeTrack.status) {
+                                                "Delivered" -> SilangGreenContainer
+                                                "Out for Delivery" -> SilangOrangeContainer
+                                                "Cancelled" -> SilangRedContainer
+                                                else -> SilangBlueContainer
+                                            },
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text(activeTrack.status, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                        }
+                                    }
+
+                                    // Visual Delivery Stepper
+                                    val steps = listOf("Pending", "Preparing", "Out for Delivery", "Delivered")
+                                    val currentIdx = steps.indexOf(activeTrack.status).coerceAtLeast(0)
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        steps.forEachIndexed { idx, label ->
+                                            val done = activeTrack.status != "Cancelled" && idx <= currentIdx
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(22.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (done) SilangGreen else SilangSlate200),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        if (done) Icons.Default.Check else Icons.Default.Circle,
+                                                        contentDescription = null,
+                                                        tint = if (done) SilangWhite else SilangSlate400,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                }
+                                                Spacer(Modifier.height(4.dp))
+                                                Text(
+                                                    text = if (label == "Out for Delivery") "En Route" else label,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (done) SilangSlate900 else SilangSlate400,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider()
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Rider: ${activeTrack.driverName}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                                        Text("ETA ~${activeTrack.etaMinutes} mins • ${formatPhp(activeTrack.totalAmount)}", style = MaterialTheme.typography.labelMedium, color = SilangOrange)
+                                    }
+                                    Text("Drop-off: ${activeTrack.address}, ${activeTrack.barangay}", style = MaterialTheme.typography.bodySmall, color = SilangSlate600)
+                                }
+                            }
+
                             RouteMapPreview(
                                 branchName = activeTrack.branch,
                                 branchLat = bCoord.first,
@@ -340,7 +447,9 @@ fun CustomerPortalScreen(
                                 customerLng = activeTrack.lng,
                                 driverName = activeTrack.driverName,
                                 driverLat = activeTrack.driverLat,
-                                driverLng = activeTrack.driverLng
+                                driverLng = activeTrack.driverLng,
+                                title = "Live Delivery Route (${activeTrack.id})",
+                                compactHeightDp = 280
                             )
                         }
                     }
@@ -350,8 +459,10 @@ fun CustomerPortalScreen(
                     CustomerProfileEditor(
                         customer = customerProfile,
                         fallbackName = activeName,
+                        branchName = state.currentBranch,
                         branchCoord = state.branchCoordinates[state.currentBranch] ?: (14.2235 to 120.9739),
-                        onSave = onUpdateProfile
+                        onSave = onUpdateProfile,
+                        onShowMessage = onShowMessage
                     )
                 }
             }
@@ -385,9 +496,16 @@ fun CustomerPortalScreen(
     }
 
     if (showBagSheet) {
+        val branchCoord = state.branchCoordinates[state.currentBranch] ?: (14.2235 to 120.9739)
         var paymentMethod by remember { mutableStateOf("Cash") }
         var paymentRef by remember { mutableStateOf("") }
         var notes by remember { mutableStateOf("") }
+        var deliveryAddress by remember(customerProfile) { mutableStateOf(customerProfile?.address ?: "Silang, Cavite") }
+        var deliveryBarangay by remember(customerProfile) { mutableStateOf(customerProfile?.barangay ?: "Brgy. Sabutan") }
+        var destLat by remember(customerProfile, state.currentBranch) { mutableStateOf(customerProfile?.lat ?: (branchCoord.first + 0.004)) }
+        var destLng by remember(customerProfile, state.currentBranch) { mutableStateOf(customerProfile?.lng ?: (branchCoord.second + 0.004)) }
+        var searchLocQuery by remember { mutableStateOf("") }
+        var searchLocHits by remember { mutableStateOf<List<LocationSearchResult>>(emptyList()) }
         var proofUri by remember { mutableStateOf<String?>(null) }
         val proofPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
             if (uri != null) proofUri = uri.toString()
@@ -396,9 +514,6 @@ fun CustomerPortalScreen(
         val itemsTotal = cart.sumOf { it.lineTotal }
         val deliveryFee = 50.0
         val grandTotal = itemsTotal + deliveryFee
-        val branchCoord = state.branchCoordinates[state.currentBranch] ?: (14.2235 to 120.9739)
-        val destLat = customerProfile?.lat ?: (branchCoord.first + 0.004)
-        val destLng = customerProfile?.lng ?: (branchCoord.second + 0.004)
 
         val focusManager = LocalFocusManager.current
         val keyboardController = LocalSoftwareKeyboardController.current
@@ -429,6 +544,67 @@ fun CustomerPortalScreen(
                         }
                     }
                 }
+                HorizontalDivider()
+
+                // Delivery Address & Interactive Drop-off Map Pin
+                Text("Drop-off Location & GPS Pin", style = MaterialTheme.typography.titleSmall)
+                OutlinedTextField(
+                    value = deliveryBarangay,
+                    onValueChange = { deliveryBarangay = it },
+                    label = { Text("Barangay") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = deliveryAddress,
+                    onValueChange = { deliveryAddress = it },
+                    label = { Text("Street / Landmark *") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = searchLocQuery,
+                        onValueChange = { searchLocQuery = it },
+                        label = { Text("Search street in Silang...") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            scope.launch { searchLocHits = RouteNetworkHelper.searchLocations(searchLocQuery) }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = SilangBlue)
+                    ) { Text("Find") }
+                }
+                searchLocHits.forEach { hit ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            destLat = hit.lat
+                            destLng = hit.lng
+                            if (hit.barangay.isNotBlank()) deliveryBarangay = hit.barangay
+                            deliveryAddress = hit.displayName
+                            searchLocHits = emptyList()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = SilangWhite
+                    ) {
+                        Text(hit.displayName, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(10.dp))
+                    }
+                }
+
+                RouteMapPreview(
+                    branchName = state.currentBranch,
+                    branchLat = branchCoord.first,
+                    branchLng = branchCoord.second,
+                    customerName = activeName,
+                    customerLat = destLat,
+                    customerLng = destLng,
+                    interactivePinSelection = true,
+                    onMapCoordinateSelected = { pLat, pLng -> destLat = pLat; destLng = pLng },
+                    compactHeightDp = 175
+                )
+
                 HorizontalDivider()
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("Cash", "GCash", "Maya").forEach { m ->
@@ -462,8 +638,8 @@ fun CustomerPortalScreen(
                             branch = state.currentBranch,
                             customerName = activeName,
                             customerPhone = customerProfile?.phone ?: "09123456789",
-                            address = customerProfile?.address ?: "Silang, Cavite",
-                            barangay = customerProfile?.barangay ?: "Brgy. Sabutan",
+                            address = deliveryAddress.trim().ifBlank { "Silang, Cavite" },
+                            barangay = deliveryBarangay.trim().ifBlank { "Brgy. Sabutan" },
                             lat = destLat,
                             lng = destLng,
                             status = "Pending",
@@ -499,7 +675,8 @@ fun CustomerPortalScreen(
                             if (res.isSuccess) {
                                 cart = emptyList()
                                 showBagSheet = false
-                                subTab = "orders"
+                                selectedTrackOrderId = del.id
+                                subTab = "tracking"
                             }
                         }
                     },
@@ -546,13 +723,18 @@ fun CustomerPortalScreen(
     }
 }
 
+@SuppressLint("MissingPermission")
 @Composable
 private fun CustomerProfileEditor(
     customer: CustomerRecord?,
     fallbackName: String,
+    branchName: String,
     branchCoord: Pair<Double, Double>,
-    onSave: (String, String, String, String, Double, Double, String?, String?) -> Unit
+    onSave: (String, String, String, String, Double, Double, String?, String?) -> Unit,
+    onShowMessage: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var phone by remember(customer) { mutableStateOf(customer?.phone ?: "") }
     var barangay by remember(customer) { mutableStateOf(customer?.barangay ?: "Brgy. Sabutan") }
     var address by remember(customer) { mutableStateOf(customer?.address ?: "") }
@@ -560,9 +742,32 @@ private fun CustomerProfileEditor(
     var lng by remember(customer) { mutableStateOf(customer?.lng ?: branchCoord.second) }
     var newPin by remember { mutableStateOf("") }
     var storeImg by remember(customer) { mutableStateOf(customer?.storeImageUri) }
+    var searchQuery by remember { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<List<LocationSearchResult>>(emptyList()) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) storeImg = uri.toString()
+    }
+
+    fun applyDeviceGps() {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        val loc = lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            ?: lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        if (loc != null) {
+            lat = loc.latitude
+            lng = loc.longitude
+            onShowMessage("GPS pin updated to current device location.")
+        } else {
+            onShowMessage("No cached GPS fix on device yet — tap the map to place your pin.")
+        }
+    }
+
+    val gpsPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
+        if (perms[Manifest.permission.ACCESS_FINE_LOCATION] == true || perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+            applyDeviceGps()
+        } else {
+            onShowMessage("Location permission denied.")
+        }
     }
 
     Column(
@@ -578,8 +783,50 @@ private fun CustomerProfileEditor(
         OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Delivery Address") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = newPin, onValueChange = { newPin = it.filter(Char::isDigit).take(6) }, label = { Text("New PIN (leave blank to keep)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Search address in Silang...") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            Button(
+                onClick = { scope.launch { searchResults = RouteNetworkHelper.searchLocations(searchQuery) } },
+                colors = ButtonDefaults.buttonColors(containerColor = SilangBlue)
+            ) { Text("Find") }
+        }
+        searchResults.forEach { hit ->
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable {
+                    lat = hit.lat
+                    lng = hit.lng
+                    if (hit.barangay.isNotBlank()) barangay = hit.barangay
+                    address = hit.displayName
+                    searchResults = emptyList()
+                },
+                shape = RoundedCornerShape(10.dp),
+                color = SilangWhite
+            ) {
+                Text(hit.displayName, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(10.dp))
+            }
+        }
+
+        OutlinedButton(
+            onClick = {
+                val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                if (hasPerm) applyDeviceGps()
+                else gpsPermLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Use My Current GPS Location")
+        }
+
         RouteMapPreview(
-            branchName = "Branch",
+            branchName = branchName,
             branchLat = branchCoord.first,
             branchLng = branchCoord.second,
             customerName = fallbackName,
