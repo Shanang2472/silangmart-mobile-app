@@ -78,6 +78,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
     implementation(libs.zxing.core)
+    implementation(libs.osmdroid.android)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
