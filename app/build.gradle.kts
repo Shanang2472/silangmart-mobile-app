@@ -78,7 +78,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
     implementation(libs.zxing.core)
-    implementation(libs.osmdroid.android)
+    // implementation(libs.osmdroid.android) // Replaced by Leaflet.js WebView map
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
