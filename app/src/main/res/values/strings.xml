@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Silang Mini Mart</string>
+    <string name="tagline">Digital Portal • Digi-Grocer</string>
+    <string name="welcome_headline">Welcome to a faster Silang Mini Mart</string>
+    <string name="welcome_subtitle">POS, Inventory, GPS Delivery Tracking, and Value-Added Services wrapped in one portal.</string>
+    <string name="system_online">System Online</string>
+    <string name="customer_login">Customer Login</string>
+    <string name="supplier_login">Supplier Login</string>
+    <string name="register_customer">Register Customer</string>
+    <string name="staff_pos_login">Staff / POS Login</string>
+    <string name="rider_login">Rider Login</string>
+    <string name="ai_preview_notice">AI Preview Mode: Connect Firebase in the setup prompt to activate live Gemini replies for Ate Digy &amp; co-pilots.</string>
+    <string name="cd_store_logo">Silang Mini Mart Logo</string>
+    <string name="cd_store_background">Silang Mini Mart Storefront</string>
+    <string name="cd_notifications">Notifications</string>
+    <string name="cd_logout">Log out</string>
+    <string name="cd_ai_assistant">Open AI Assistant</string>
+    <string name="cd_voice_input">Voice input</string>
+    <string name="cd_speak_response">Listen in Tagalog</string>
+    <string name="cd_qr_receipt">Official Receipt QR Code</string>
+</resources>
