@@ -5,10 +5,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,7 +26,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -38,7 +35,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.*
 import com.example.data.network.LocationSearchResult
@@ -507,9 +503,6 @@ fun CustomerPortalScreen(
         var searchLocQuery by remember { mutableStateOf("") }
         var searchLocHits by remember { mutableStateOf<List<LocationSearchResult>>(emptyList()) }
         var proofUri by remember { mutableStateOf<String?>(null) }
-        val proofPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-            if (uri != null) proofUri = uri.toString()
-        }
 
         val itemsTotal = cart.sumOf { it.lineTotal }
         val deliveryFee = 50.0
@@ -619,9 +612,12 @@ fun CustomerPortalScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedButton(onClick = { proofPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                        Text(if (proofUri == null) "Upload Payment Screenshot (Optional)" else "Screenshot Attached")
-                    }
+                    DeviceImagePickerField(
+                        label = "$paymentMethod Screenshot (Optional)",
+                        imageUri = proofUri,
+                        onImageSelected = { proofUri = it },
+                        testTagPrefix = "payment_proof"
+                    )
                 }
                 OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Delivery Notes / Landmark") }, modifier = Modifier.fillMaxWidth())
                 Text("Items: ${formatPhp(itemsTotal)} + Fee ${formatPhp(deliveryFee)} = ${formatPhp(grandTotal)}", style = MaterialTheme.typography.titleMedium, color = SilangOrange)
@@ -745,10 +741,6 @@ private fun CustomerProfileEditor(
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<LocationSearchResult>>(emptyList()) }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) storeImg = uri.toString()
-    }
-
     fun applyDeviceGps() {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         val loc = lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
@@ -836,19 +828,12 @@ private fun CustomerProfileEditor(
             onMapCoordinateSelected = { pLat, pLng -> lat = pLat; lng = pLng }
         )
 
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                Text("Update Store Photo")
-            }
-            if (!storeImg.isNullOrBlank()) {
-                AsyncImage(
-                    model = storeImg,
-                    contentDescription = "Customer store photo",
-                    modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)),
-                    contentScale = ContentScale.Crop
-                )
-            }
-        }
+        DeviceImagePickerField(
+            label = "Store / Gate Photo",
+            imageUri = storeImg,
+            onImageSelected = { storeImg = it },
+            testTagPrefix = "profile_store_photo"
+        )
 
         Button(
             onClick = { onSave(fallbackName, phone, barangay, address, lat, lng, newPin.ifBlank { null }, storeImg) },

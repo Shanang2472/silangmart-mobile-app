@@ -1,9 +1,5 @@
 package com.example.ui.screens
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -35,10 +31,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.network.LocationSearchResult
 import com.example.data.network.RouteNetworkHelper
+import com.example.ui.components.DeviceImagePickerField
 import com.example.ui.components.RouteMapPreview
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
@@ -369,12 +365,6 @@ private fun AuthModalSheet(
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<LocationSearchResult>>(emptyList()) }
 
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        if (uri != null) regStoreImageUri = uri.toString()
-    }
-
     DisposableEffect(Unit) {
         onDispose {
             focusManager.clearFocus(force = true)
@@ -613,26 +603,13 @@ private fun AuthModalSheet(
                     }
                 )
 
-                // Optional Store/House Photo via Zero-Permission Android Photo Picker
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        }
-                    ) {
-                        Icon(Icons.Default.PhotoCamera, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (regStoreImageUri == null) "Store / Gate Photo (Optional)" else "Change Photo")
-                    }
-                    if (regStoreImageUri != null) {
-                        AsyncImage(
-                            model = regStoreImageUri,
-                            contentDescription = "Selected store photo",
-                            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
-                }
+                // Optional Store/House Photo uploaded from user device
+                DeviceImagePickerField(
+                    label = "Store / Gate Photo (Optional)",
+                    imageUri = regStoreImageUri,
+                    onImageSelected = { regStoreImageUri = it },
+                    testTagPrefix = "register_store_photo"
+                )
 
                 Button(
                     onClick = {

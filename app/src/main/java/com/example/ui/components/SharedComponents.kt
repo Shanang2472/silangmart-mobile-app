@@ -46,6 +46,13 @@ fun ProductThumbnail(
     overrideImage: String? = null
 ) {
     val candidate = overrideImage ?: product.images.firstOrNull()
+    var loadFailed by remember(candidate) { mutableStateOf(false) }
+    val isSupportedUri = !candidate.isNullOrBlank() && (
+        candidate.startsWith("http") ||
+            candidate.startsWith("content:") ||
+            candidate.startsWith("file:") ||
+            candidate.startsWith("/")
+        )
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
@@ -53,11 +60,12 @@ fun ProductThumbnail(
             .border(1.dp, SilangSlate200, RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center
     ) {
-        if (!candidate.isNullOrBlank() && (candidate.startsWith("http") || candidate.startsWith("content:") || candidate.startsWith("file:"))) {
+        if (isSupportedUri && !loadFailed) {
             AsyncImage(
                 model = candidate,
                 contentDescription = product.name,
                 contentScale = ContentScale.Crop,
+                onError = { loadFailed = true },
                 modifier = Modifier.fillMaxSize()
             )
         } else {
@@ -188,6 +196,15 @@ fun DeliveryReceiptDialog(
                 HorizontalDivider()
                 ReceiptLine("Delivery Fee", formatPhp(delivery.deliveryFee))
                 ReceiptLine("Total Amount", formatPhp(delivery.totalAmount), bold = true)
+                if (!delivery.paymentProofUri.isNullOrBlank()) {
+                    Text("Payment Screenshot:", style = MaterialTheme.typography.labelMedium)
+                    AsyncImage(
+                        model = delivery.paymentProofUri,
+                        contentDescription = "Payment proof screenshot",
+                        modifier = Modifier.fillMaxWidth().height(120.dp).clip(RoundedCornerShape(10.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                }
                 if (!delivery.podPhotoUri.isNullOrBlank()) {
                     Text("Proof of Delivery Photo:", style = MaterialTheme.typography.labelMedium)
                     AsyncImage(

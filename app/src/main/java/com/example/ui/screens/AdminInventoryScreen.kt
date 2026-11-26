@@ -1,9 +1,5 @@
 package com.example.ui.screens
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,16 +14,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import com.example.data.model.*
 import com.example.ui.SilangUiState
+import com.example.ui.components.DeviceMultiImagePickerField
 import com.example.ui.components.ProductThumbnail
 import com.example.ui.theme.*
 import java.time.LocalDate
@@ -302,7 +295,7 @@ private fun ProductEditorDialog(
     var supplierName by remember { mutableStateOf(initial?.supplierName ?: "SupplierSilang") }
     var authStatus by remember { mutableStateOf(initial?.authenticityStatus ?: "verified") }
     var lowThreshold by remember { mutableStateOf((initial?.lowStockThreshold ?: 10).toString()) }
-    var imageUri by remember { mutableStateOf(initial?.images?.firstOrNull()) }
+    var productImages by remember { mutableStateOf(initial?.images ?: emptyList()) }
 
     val branchStocks = remember {
         mutableStateMapOf<String, String>().apply {
@@ -310,10 +303,6 @@ private fun ProductEditorDialog(
                 put(b.name, (initial?.stockForBranch(b.name) ?: 50).toString())
             }
         }
-    }
-
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) imageUri = uri.toString()
     }
 
     AlertDialog(
@@ -373,19 +362,11 @@ private fun ProductEditorDialog(
                     }
                 }
                 OutlinedTextField(value = barcode, onValueChange = { barcode = it }, label = { Text("Barcode") }, singleLine = true)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                        Text(if (imageUri == null) "Pick Image" else "Change Image")
-                    }
-                    if (!imageUri.isNullOrBlank()) {
-                        AsyncImage(
-                            model = imageUri,
-                            contentDescription = "Product image",
-                            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
-                }
+                DeviceMultiImagePickerField(
+                    label = "Product Photos (Device Upload)",
+                    images = productImages,
+                    onImagesChanged = { productImages = it }
+                )
             }
         },
         confirmButton = {
@@ -413,7 +394,7 @@ private fun ProductEditorDialog(
                             unit = unit.trim().ifBlank { "pc" },
                             lowStockThreshold = lowThreshold.toIntOrNull() ?: 10,
                             overStockThreshold = initial?.overStockThreshold ?: defaultLimit,
-                            images = listOfNotNull(imageUri),
+                            images = productImages,
                             variants = initial?.variants ?: emptyList()
                         )
                     )

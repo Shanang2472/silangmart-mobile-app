@@ -8,7 +8,6 @@ import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,8 +23,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -33,7 +30,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.*
 import com.example.ui.SilangUiState
@@ -266,27 +262,17 @@ fun RiderDashboardScreen(
     podOrder?.let { order ->
         var podUri by remember { mutableStateOf<String?>(null) }
         var confirmed by remember { mutableStateOf(true) }
-        val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-            if (uri != null) podUri = uri.toString()
-        }
         AlertDialog(
             onDismissRequest = { podOrder = null },
             title = { Text("Proof of Delivery • ${order.id}") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                        Icon(Icons.Default.PhotoCamera, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (podUri == null) "Attach POD Photo (Optional)" else "Photo Attached")
-                    }
-                    if (podUri != null) {
-                        AsyncImage(
-                            model = podUri,
-                            contentDescription = "POD Preview",
-                            modifier = Modifier.fillMaxWidth().height(120.dp).clip(RoundedCornerShape(10.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
+                    DeviceImagePickerField(
+                        label = "Proof of Delivery Photo (Optional)",
+                        imageUri = podUri,
+                        onImageSelected = { podUri = it },
+                        testTagPrefix = "rider_pod"
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = confirmed, onCheckedChange = { confirmed = it })
                         Text("Customer received items & payment settled", style = MaterialTheme.typography.bodySmall)
